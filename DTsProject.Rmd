@@ -1,0 +1,565 @@
+---
+title: "Dominique's Project"
+author: "Dominique"
+date: "July 2015"
+output: 
+  html_document:
+    fig_height: 3
+    fig_width: 5
+  pdf_document:
+    fig_height: 3
+    fig_width: 5
+  word_document:
+    fig_height: 3
+    fig_width: 5
+runtime: shiny
+---
+
+
+```{r, include=FALSE}
+# Don't delete this chunk if you are using the mosaic package
+# This loads the mosaic and dplyr packages
+require(mosaic)
+```
+
+```{r, include=FALSE}
+# Some customization.  You can alter or delete as desired (if you know what you are doing).
+
+# This changes the default colors in lattice plots.
+trellis.par.set(theme=theme.mosaic())  
+
+# knitr settings to control how R chunks work.
+require(knitr)
+opts_chunk$set(
+  tidy=FALSE,     # display code as typed
+  size="small"    # slightly smaller font for code
+)
+```
+
+```{r, include=FALSE}
+# Load additional packages here.  Uncomment the line below to use Project MOSAIC data sets.
+# require(mosaicData)   
+```
+
+Getting the data
+=========================================
+
+```{python}
+# generate pop growth
+#
+# generatePop.py
+# D. Thiebaut
+
+import random
+
+# define parameters
+dataFileName = "pop%04d.dat"
+maxT = 2            # how fast we progress in time
+T = 3 * 31          # max time frame (3 months)
+maxPop = 2400       # max # of students
+proportion = 0.50   # how much of the population contributes
+                    # to new cases of infection
+oneBigFile = True
+severalFiles = True
+
+def generateOneInfectionHistory( Id ):
+    global dataFileName
+    
+    # iterate and generate population
+    pop = 0             # starting pop
+    t = 0
+    out = ""
+    while t <= T:
+        out += "%d, %d, %d\n" % ( Id, t, pop )
+        if pop < maxPop / 2:
+            pop += 1 + random.randrange( int( pop*proportion) +1 )
+        else:
+            pop += 1 + random.randrange( int( (maxPop - pop)*proportion) + 1 )
+        pop = min( maxPop, pop )    
+        t += 1 + random.randrange( maxT )
+    return out
+
+def main():
+    allOut = "Id, time, pop\n"
+    for i in range( 10 ):
+        out = generateOneInfectionHistory( i+1 )       
+        print( dataFileName % (i+1), "created" )
+        allOut += out
+        if severalFiles:
+            out = "Id, time, pop\n" + out
+            open( "pop%04d.dat" % (i+1), 'w' ).write( out )
+
+    if oneBigFile:
+            open( "pop%04d_%04d.dat" % (0,(i+1)), 'w' ).write( allOut )
+        
+        
+main()
+```
+Reading the Data In
+====================
+```{r}
+ pop0000_0200 <- read.csv("~/Desktop/Dropbox/CVC2015_Workshop/pop50_0000_0200.dat")
+```
+
+
+This generates N different files, and 1 large file containing all the N files.  
+The format of a file is:
+```
+Id, time, pop
+1, 0, 0
+1, 2, 1
+1, 3, 2
+1, 5, 3
+1, 7, 4
+1, 9, 5
+1, 11, 8
+1, 12, 10
+1, 13, 12
+1, 15, 16
+...
+1, 84, 2400
+1, 86, 2400
+1, 88, 2400
+1, 89, 2400
+1, 90, 2400
+1, 92, 2400
+1, 93, 2400
+```
+Create Mean of Points
+==
+```{r}
+pop0000_0200avgCount <- pop0000_0200 %>% group_by( time = 5*trunc(time/5)  ) %>% summarise( avgPop = mean( pop ), count=n() ) 
+```
+Plot
+=========
+Option 1: jagged mean
+==
+
+```{r, out.width = '750px', dpi=200}
+ggplot( data=pop0000_0200, aes( x = time, y = pop, color = Id ) ) + geom_point( ) +  scale_colour_gradientn(colours=rainbow(4)) + stat_summary(fun.y = mean, geom = 'line', color = 'blue' )
+```
+
+Option 2: smooth means, but data in bins
+==
+
+```{r, out.width = '750px', dpi=200}
+ ggplot( data=pop0000_0200, aes( x = trunc(time/3)*3, y = pop, color = Id ) ) + geom_point( ) +  scale_colour_gradientn(colours=rainbow(4)) + stat_summary(fun.y = mean, geom = 'smooth', color = 'blue', width=3 )
+```
+
+Option 3: Plotting just the Mean
+==
+
+```{r}
+ggplot( data=pop0000_0200avgCount  ) + geom_line(  aes( x=time, y=avgPop ), color='blue' ) + xlab( 'time' ) + ylab( 'Infected Population' )
+
+```
+
+Step 4: computing discrete slope
+==
+Add an additional variable (column) to pop0000_0200avgCount, call it slope, and fill it with the avgPop.  Then run a for-loop and fill the new column with the value of the slope.  
+
+ 
+```{r}
+temp <- mutate( pop0000_0200avgCount, slope=avgPop )
+for ( i in 2: nrow( temp) ) { temp[i,4] <- temp[i,2]-temp[i-1,2] }
+head( temp )
+```
+Display the resulting slopes as points:
+```{r}
+ggplot(  ) + geom_line( data=temp, aes( x=time, y=avgPop ), color='blue' ) + geom_point( data=temp, aes(x=time, y=slope), color='red' )
+```
+
+Compute the max slope:
+```{r}
+summarize( temp, maxSlope=max( slope ) )
+```
+
+Shiny Application Ver. 1: Local Files
+======================================
+```{r}
+# app.R
+# D. Thiebaut
+
+library( "ggplot2" )
+library( "shiny" )
+
+data_sets <- list()
+data_sets[["pop10"]] <- read.csv("~/Desktop/Dropbox/CVC2015_Workshop/pop10_0000_0200.dat")
+data_sets[["pop20"]] <- read.csv("~/Desktop/Dropbox/CVC2015_Workshop/pop20_0000_0200.dat")
+data_sets[["pop30"]] <- read.csv("~/Desktop/Dropbox/CVC2015_Workshop/pop30_0000_0200.dat")
+data_sets[["pop40"]] <- read.csv("~/Desktop/Dropbox/CVC2015_Workshop/pop40_0000_0200.dat")
+data_sets[["pop50"]] <- read.csv("~/Desktop/Dropbox/CVC2015_Workshop/pop50_0000_0200.dat")
+data_sets[["pop60"]] <- read.csv("~/Desktop/Dropbox/CVC2015_Workshop/pop60_0000_0200.dat")
+data_sets[["pop70"]] <- read.csv("~/Desktop/Dropbox/CVC2015_Workshop/pop70_0000_0200.dat")
+data_sets[["pop80"]] <- read.csv("~/Desktop/Dropbox/CVC2015_Workshop/pop80_0000_0200.dat")
+data_sets[["pop90"]] <- read.csv("~/Desktop/Dropbox/CVC2015_Workshop/pop90_0000_0200.dat")
+
+
+server <- function( input, output ) {
+  output$main_plot <- renderPlot({
+    
+      ggplot( data=data_sets[[paste0("pop", input$n_breaks)]], 
+              aes( x = time, y = pop, color = Id ) ) + 
+              geom_point( ) +  
+              scale_colour_gradientn(colours=rainbow(4)) + 
+              stat_summary(fun.y = mean, geom = 'line', color = 'blue' )
+  } )
+}
+
+ui <- fluidPage(
+  selectInput(inputId = "n_breaks",
+              label = "Population Growth (magic param):",
+              choices = c(10, 20, 30, 40, 50, 60, 70, 80, 90),
+              selected = 50),
+  
+  plotOutput(outputId = "main_plot", height = "300px")
+)
+
+shinyApp(ui = ui, server = server)
+
+
+```
+
+Shiny Application Ver. 2: Load Data File Dynamically
+====================================================
+
+```{r}
+# app.R
+# D. Thiebaut
+
+library( "ggplot2" )
+library( "shiny" )
+
+server <- function( input, output ) {
+  
+  dataSet <- reactive( {
+      fileName <- paste0( "~/Desktop/Dropbox/CVC2015_Workshop/pop", input$n_breaks, "_0000_0200.dat")
+      read.csv( fileName )
+      } )
+  
+  output$main_plot <- renderPlot({
+      ggplot( data=dataSet(), 
+              aes( x = time, y = pop, color = Id ) ) + 
+              geom_point( ) +  
+              scale_colour_gradientn(colours=rainbow(4)) + 
+              stat_summary(fun.y = mean, geom = 'line', color = 'blue' )
+  } )
+}
+
+ui <- fluidPage(
+  selectInput(inputId = "n_breaks",
+              label = "Population Growth (magic param):",
+              choices = c(10, 20, 30, 40, 50, 60, 70, 80, 90),
+              selected = 50),
+  
+  plotOutput(outputId = "main_plot", height = "300px")
+)
+
+shinyApp(ui = ui, server = server)
+
+
+```
+
+Shiny Application Ver. 3: Grab file dynamically from Web Page
+=============================================================
+
+Simply create the dataset differently.  The URL for the data is http://hadoop0.dyndns.org/R/
+
+```{text}
+
+
+Index of /R
+
+[ICO]	Name	Last modified	Size	Description
+[PARENTDIR]	Parent Directory	 	-	 
+[TXT]	generatePop.py	2015-07-16 09:21	1.8K	 
+[   ]	pop10_0000_0200.dat	2015-07-16 11:45	141K	 
+[   ]	pop20_0000_0200.dat	2015-07-16 09:22	146K	 
+[   ]	pop30_0000_0200.dat	2015-07-16 09:21	150K	 
+[   ]	pop40_0000_0200.dat	2015-07-16 09:22	153K	 
+[   ]	pop50_0000_0200.dat	2015-07-16 09:21	154K	 
+[   ]	pop60_0000_0200.dat	2015-07-16 09:22	155K	 
+[   ]	pop70_0000_0200.dat	2015-07-16 09:22	156K	 
+[   ]	pop80_0000_0200.dat	2015-07-16 09:22	157K	 
+[   ]	pop90_0000_0200.dat	2015-07-16 09:22	157K	 
+Apache/2.4.7 (Ubuntu) Server at hadoop0.dyndns.org Port 80
+```
+And we just need to change how the data-set is created:
+```{r, eval=FALSE}
+  dataSet <- reactive( {
+    fileName <- paste0( "http://hadoop0.dyndns.org/R/pop", input$n_breaks, "_0000_0200.dat")
+    read.csv( url( fileName ) )
+  } )
+
+```
+
+Shiny Application Ver. 4: Grab file dynamically from cgi-script
+=============================================================
+
+Steps
+==
+* add cgi-bin capability to Apache server on Hadoop0
+* create python cgi-bin script
+* slightly modify how to get the data from a file name created using the number generated in the input widget.
+* the new URL is http://hadoop0.dyndns.org/cgi-bin/generatePop.py?param=50
+* change 50 to some int between 1 and 99.
+
+```{python}
+#! /usr/bin/env python3
+# D. Thiebaut
+# generate pop growth
+#
+
+import random, sys
+import cgi
+
+#--- cgi setup ---
+print( "Content-Type: text/plain" )
+print()
+
+#--- define global parameters ---
+dataFileName = "pop%02d_%04d.dat"
+maxT = 2            # how fast we progress in time
+T = 3 * 31          # max time frame (3 months)
+maxPop = 2400       # max # of students
+proportion = 0.50   # how much of the population contributes
+                    # to new cases of infection
+noFiles      = 200                    
+oneBigFile   = True
+severalFiles = False
+printOut     = True
+
+
+def getParams():
+    """ get parameters from URL"""
+    dico = {}
+    arguments = cgi.FieldStorage()
+    for i in arguments.keys():
+        #print( i, "-->", arguments[i].value )
+        dico[i] = arguments[i].value
+    return dico
+
+def getProportion():
+    """ get proportion parameter from URL"""
+    dico = getParams()
+    try:
+        return int(dico["param"])/100.0
+    except:
+        return 0.50   # default value if nothing is passed
+                      # in URL
+
+
+def generateOneInfectionHistory( Id ):
+    """generate 1 semester worth of data, showing increase
+    of infected students population as a function of days
+    (1 semester max)"""
+    
+    global dataFileName
+    
+    # iterate and generate population
+    pop = 0             # starting pop
+    t = 0
+    out = ""
+    while t <= T:
+        out += "%d, %d, %d\n" % ( Id, t, pop )
+        if pop < maxPop / 2:
+            pop += 1 + random.randrange( int( pop*proportion) +1 )
+        else:
+            pop += 1 + random.randrange( int( (maxPop - pop)*proportion) + 1 )
+        pop = min( maxPop, pop )    
+        t += 1 + random.randrange( maxT )
+    return out
+
+
+def main():
+    global noFiles, proportion
+
+    # get proportion parameter from URL
+    proportion = getProportion()
+
+    allOut = "Id, time, pop\n"
+    if printOut:
+        print( allOut, end="" )
+
+    for i in range( noFiles ):
+        out = generateOneInfectionHistory( i+1 )       
+        if printOut: 
+            print( out, end="" )
+
+        allOut += out
+        if severalFiles:
+            out = "Id, time, pop\n" + out
+            open( "pop%02d_%04d.dat" % (int(proportion*100),i+1), 'w' ).write( out )
+            #print( dataFileName % (int(proportion*100), i+1), "created" )
+
+    if oneBigFile:
+        open( "pop%02d_%04d_%04d.dat" % (int(proportion*100),0,(i+1)), 'w' ).write( allOut )
+
+
+        
+main()
+```
+
+New shiny file.
+==
+
+```{r}
+# app.R
+# D. Thiebaut
+# reads data from files on a Web server
+#
+library( "ggplot2" )
+library( "shiny" )
+
+server <- function( input, output ) {
+  
+  dataSet <- reactive( {
+    fileName <- paste0( "http://hadoop0.dyndns.org/cgi-bin/generatePop.py?param=", input$n_breaks )
+    read.csv( url( fileName ) )
+  } )
+  
+  output$main_plot <- renderPlot({
+    ggplot( data=dataSet(), 
+            aes( x = time, y = pop, color = Id ) ) + 
+      geom_point( ) +  
+      scale_colour_gradientn(colours=rainbow(4)) + 
+      stat_summary(fun.y = mean, geom = 'line', color = 'blue' )
+  } )
+}
+
+ui <- fluidPage(
+  selectInput(inputId = "n_breaks",
+              label = "Population Growth (magic param):",
+              choices = c(10, 20, 30, 40, 50, 60, 70, 80, 90),
+              selected = 50),
+  
+  plotOutput(outputId = "main_plot", height = "300px")
+)
+
+shinyApp(ui = ui, server = server)
+
+```
+
+Shiny Application Ver. 4: Slider, Grab file dynamically from cgi-script
+===========================================================================
+
+Just change the UI.
+
+```{r}
+# app.R
+# D. Thiebaut
+# reads data from files on a Web server using cgi-bin
+# uses a slider
+library( "ggplot2" )
+library( "shiny" )
+
+server <- function( input, output ) {
+  
+  dataSet <- reactive( {
+    fileName <- paste0( "http://hadoop0.dyndns.org/cgi-bin/generatePop.py?param=", input$n_breaks )
+    read.csv( url( fileName ) )
+  } )
+  
+  output$main_plot <- renderPlot({
+    ggplot( data=dataSet(), 
+            aes( x = time, y = pop, color = Id ) ) + 
+      geom_point( ) +  
+      scale_colour_gradientn(colours=rainbow(4)) + 
+      stat_summary(fun.y = mean, geom = 'line', color = 'blue' )
+  } )
+}
+
+ui <- fluidPage(
+  titlePanel( "Infected Population", windowTitle = "Growth of Infected Population" ),
+  
+  sliderInput( inputId = "n_breaks", label = "Population Growth (magic param):",
+               min = 1, max = 99, step = 0.5, value = 50 ),
+  
+  plotOutput(outputId = "main_plot", height = "300px")
+)
+
+shinyApp(ui = ui, server = server)
+
+
+```
+
+Shiny Application Ver. 5: adding an input widget
+================================================
+
+
+
+
+
+```{r, out.width = '750px', out.height='1200px', dpi=200}
+# app.R
+# D. Thiebaut
+# reads data from files on a Web server using cgi-bin
+# uses a slider
+library( "ggplot2" )
+library( "shiny" )
+
+server <- function( input, output ) {
+  
+  dataSet <- reactive( {
+    fileName <- paste0( "http://hadoop0.dyndns.org/cgi-bin/generatePop.py?proportion=", input$n_breaks,
+                        "&simulations=", input$noSimulations )
+    read.csv( url( fileName ) )
+  } )
+  
+  output$main_plot <- renderPlot({
+    ggplot( data=dataSet(), 
+            aes( x = time, y = pop, color = Id ) ) + 
+      geom_point( ) +  
+      scale_colour_gradientn(colours=rainbow(4)) + 
+      stat_summary(fun.y = mean, geom = 'line', color = 'blue' )
+  } )
+}
+
+ui <- fluidPage(
+
+  titlePanel( "Infected Population", windowTitle = "Growth of Infected Population" ),
+  
+  mainPanel( h2( "Description"), p( "This graph shows the result of 200 simulations of the growth a population of infected students on a campus, as a function of some 'magic' parameter controlled by the slider."),
+             p( "The points show the growth resulting from the 200 simulations, and the line shows the average of the points over bins of 3 time periods." ),
+             p( "The data are read from a URL where a server generates data on the fly.  The value of the slider is sent as a suffix to the URL (e.g. http://hadoop0.dyndns.org/cgi-bin/generatePop.py?param=71) and the server generates 200 different simulations." )
+                
+  ),
+  selectInput(inputId = "noSimulations",
+              label = "Number of Simulations:",
+              choices = c(20, 100, 250, 500, 1000),
+              selected = 250),
+  
+  sliderInput( inputId = "n_breaks", label = "Population Growth (magic param):",
+               min = 1, max = 99, step = 0.5, value = 50 ),
+  
+  plotOutput(outputId = "main_plot", height = "300px")
+)
+
+shinyApp(ui = ui, server = server)
+
+
+```
+
+
+
+
+
+
+
+Publishing to ShinyApps.io
+==========================
+
+* Just File/Publish
+* Create account dthiebaut/shiny2foisNeuf2fois
+* URL: "https://dthiebaut.shinyapps.io/GrowthInfectedPopulation"
+
+Publishing to a Web Site
+========================
+* library( "markdown" )
+* install.packages( "markdown" )
+* markdownToHTML( 'DTsProject.md', 'DTsProject.html' )
+* File DTsProject.html appears in ShinyDir folder.
+* Rsync the html file to the Web server
+** rsync -azv DTsProject.html dthiebaut@beowulf2.csc.smith.edu:/usr/local/CS/htdocs/dftwiki/R/
+
+
